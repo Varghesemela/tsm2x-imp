@@ -7,6 +7,8 @@ Cody Rivera [cjrivera1@crimson.ua.edu],
 Jieyang Chen [chenj3@ornl.gov], and
 Dingwen Tao [dingwen.tao@wsu.edu]
 
+This repository is updated to work on AMD GPUs. It essentially converts all the cuda calls to hip calls for the rocm gpu architecture. The code was tested on an AMD cluster of MI100 GPUs
+
 This repository contains an implementation of two irregular-shape matrix-matrix
 multiplication algorithms, `TSM2R` and `TSM2L`. `TSM2R` is designed to efficiently
 multiply a large square (or near-square) matrix by a tall-and-skinny matrix, or
@@ -24,8 +26,9 @@ Tesla V100.
 
 We have implemented the kernels as templates, with the parameters `t1`, `t2`, and `t3` as
 template variables [1]. The program will select an optimal kernel depending on the 
-size of the input matrices. This repository currently provides a set of optimal kernels for
-the Nvidia V100 GPU only.
+size of the input matrices. 
+
+
 
 Instructions:
 -------------
