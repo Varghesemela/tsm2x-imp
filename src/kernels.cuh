@@ -6,6 +6,8 @@
 #ifndef _KERNELS_CUH
 #define _KERNELS_CUH
 
+#include <hip/hip_runtime.h>
+
 template <typename FloatType>
 void launchKernelTsm2(const FloatType* devA, const FloatType* devB, FloatType* devC,
                       const unsigned int m, const unsigned int n, 

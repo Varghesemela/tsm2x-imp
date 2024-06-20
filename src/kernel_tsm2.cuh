@@ -8,7 +8,8 @@
 #ifndef _KERNEL_TSM2_CUH
 #define _KERNEL_TSM2_CUH
 
-#include "cuda_runtime.h"
+// #include <wb.h>
+#include <hip/hip_runtime.h>
  
 template <typename FloatType, int t1, int t2, int t3>
 __global__ void kernelTsm2(const FloatType* A, const FloatType* B, FloatType* C,
@@ -39,14 +40,14 @@ __global__ void kernelTsm2(const FloatType* A, const FloatType* B, FloatType* C,
 
             // Loads first tile of output registers and A
             if (thread < m) {
-                #pragma unroll
+                #pragma unroll 2
                 for (int i = 0; i < t2; ++i) {
                     if (p + i < n) {
                         currC[i] = C[thread + ((p + i) * m)];
                     }
                 }
                 // Loads currA
-                #pragma unroll
+                #pragma unroll 2
                 for (int i = 0; i < t3; ++i) {
                     if (i < k) {
                         currA[i] = A[thread + (i * m)];
@@ -55,7 +56,7 @@ __global__ void kernelTsm2(const FloatType* A, const FloatType* B, FloatType* C,
             }
             // Loads tile of B
             if (tid < k) {
-                #pragma unroll
+                #pragma unroll 2
                 for (int i = 0; i < t2; ++i) {
                     if (p + i < n) {
                         currB[tid + (i * t1)] = B[tid + ((p + i) * k)];
@@ -68,7 +69,7 @@ __global__ void kernelTsm2(const FloatType* A, const FloatType* B, FloatType* C,
                 __syncthreads();
                 // Loads next tile of B
                 if (j + t1 + tid < k) {
-                    #pragma unroll
+                    #pragma unroll 2
                     for (int i = 0; i < t2; ++i) {
                         if (p + i < n) {
                             nextB[i] = B[(j + t1 + tid) + ((p + i) * k)];
@@ -77,11 +78,11 @@ __global__ void kernelTsm2(const FloatType* A, const FloatType* B, FloatType* C,
                 }
 
                 const int t3mod = t1 % t3;
-
+                #pragma unroll 2
                 // Loop over A's columns
                 for (int l = j; l < j + (t1 - t3mod) && l < k; l += t3) {
                     // Loads next A
-                    #pragma unroll
+                    #pragma unroll 2
                     for (int i = 0; i < t3; ++i) {
                         if (l + t3 + i < k && thread < m) {
                             nextA[i] = A[thread + ((l + t3 + i) * m)];
@@ -96,18 +97,18 @@ __global__ void kernelTsm2(const FloatType* A, const FloatType* B, FloatType* C,
                     if (l + t3 <= k) {
                         // It is assumed that B[(l - j) .. (l - j) + t3 - 1, _]
                         // exist
-                        #pragma unroll
+                        #pragma unroll 2
                         for (int a = 0; a < t2; ++a) {
-                            #pragma unroll
+                            #pragma unroll 2
                             for (int b = 0; b < t3; ++b) {
                                 currC[a] +=
                                     currA[b] * currB[(l - j) + b + (a * t1)];
                             }
                         }
                     } else {
-                        #pragma unroll
+                        #pragma unroll 2
                         for (int a = 0; a < t2; ++a) {
-                            #pragma unroll
+                            #pragma unroll 2
                             for (int b = 0; b < t3; ++b) {
                                 if (l + b < k) {
                                     currC[a] += currA[b] *
@@ -118,15 +119,15 @@ __global__ void kernelTsm2(const FloatType* A, const FloatType* B, FloatType* C,
                     }
 
                     // Stores next A in curr A
-                    #pragma unroll
+                    #pragma unroll 2
                     for (int i = 0; i < t3; ++i) {
                         currA[i] = nextA[i];
                     }
                 }
                 // Accommodates t3 that do not divide t1.
-                #pragma unroll
+                #pragma unroll 2
                 for (int a = 0; a < t2; ++a) {
-                    #pragma unroll
+                    #pragma unroll 2
                     for (int b = 0; b < t3mod; ++b) {
                         if (j + t1 - t3mod + b < k) {
                             currC[a] +=
@@ -138,14 +139,14 @@ __global__ void kernelTsm2(const FloatType* A, const FloatType* B, FloatType* C,
                 __syncthreads();
 
                 // Loads currB from each thread's nextB
-                #pragma unroll
+                #pragma unroll 2
                 for (int i = 0; i < t2; ++i) {
                     currB[tid + (i * t1)] = nextB[i];
                 }
 
                 // Loads next currA
                 if (t3mod != 0) {
-                    #pragma unroll
+                    #pragma unroll 2
                     for (int i = 0; i < t3; ++i) {
                         if (j + t1 + i < k && thread < m) {
                             currA[i] = A[thread + ((j + t1 + i) * m)];
@@ -155,7 +156,7 @@ __global__ void kernelTsm2(const FloatType* A, const FloatType* B, FloatType* C,
             }
             // Stores C
             if (thread < m) {
-                #pragma unroll
+                #pragma unroll 2
                 for (int i = 0; i < t2; ++i) {
                     if (p + i < n) {
                         C[thread + ((p + i) * m)] = currC[i];

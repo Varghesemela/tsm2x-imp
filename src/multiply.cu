@@ -13,12 +13,13 @@
 #include <fstream>
 #include <iostream>
 
-#include "cublas_v2.h"
-#include "cuda_runtime.h"
-#include "cuda_error.cuh"
+// #include "libwb/wb.h"
+#include <hip/hip_runtime.h>
+#include <rocblas/rocblas.h>
+#include "hip_error.cuh"
 #include "kernels.cuh"
 #include "multiply.cuh"
-#include "launch_cublas.cuh"
+#include "launch_rocblas.cuh"
 
 // Testing Parameters -- Adjust as needed
 #define EPS 1e-3
@@ -63,10 +64,9 @@ bool matrixCompare(const FloatType* A, const FloatType* B, unsigned int m,
 }
 
 template <typename FloatType>
-void reportTestSuccess(const char* testName, double GFLOPs,
-                       double totalGFLOPs) {
+void reportTestSuccess(const char* testName, double GFLOPs) {
     printf("%s succeeded: %g GFLOPs, %g GFLOPs acc. for transfers\n", testName,
-           GFLOPs, totalGFLOPs);
+           GFLOPs);
 }
 
 template <typename FloatType>
@@ -88,7 +88,7 @@ double getGFLOPs(double time, unsigned int m, unsigned int n, unsigned int k) {
 }
 
 /**
- * Kernel launch wrapper. Runs both CUBLAS and TSM2/ISM2, for evaluation
+ * Kernel launch wrapper. Runs both rocBLAS and TSM2/ISM2, for evaluation
  * purposes.
  */
 template <typename FloatType>
@@ -100,7 +100,7 @@ bool runKernels(const FloatType* A, const FloatType* B, FloatType* C,
     // Device memory
     FloatType *devA, *devB, *devC;
     // Events used for timing
-    cudaEvent_t start, end, startTotal, endTotal;
+    hipEvent_t start, end, startTotal, endTotal;
     float time, timeTotal;
 
     printf("Multiplying matrix A[%u, %u] by matrix B[%u, %u]\n\n", m, k, k, n);
@@ -118,58 +118,57 @@ bool runKernels(const FloatType* A, const FloatType* B, FloatType* C,
         return false;
     }
 
-    cudaErrchk(cudaMalloc((FloatType**)&devA, m * k * sizeof(FloatType)));
-    cudaErrchk(cudaMalloc((FloatType**)&devB, k * n * sizeof(FloatType)));
-    cudaErrchk(cudaMalloc((FloatType**)&devC, m * n * sizeof(FloatType)));
+    hipMalloc((FloatType**)&devA, m * k * sizeof(FloatType));
+    hipMalloc((FloatType**)&devB, k * n * sizeof(FloatType));
+    hipMalloc((FloatType**)&devC, m * n * sizeof(FloatType));
 
-    // Inits CUDA events
-    cudaErrchk(cudaEventCreate(&start));
-    cudaErrchk(cudaEventCreate(&end));
-    cudaErrchk(cudaEventCreate(&startTotal));
-    cudaErrchk(cudaEventCreate(&endTotal));
+    // Inits hip events
+    hipEventCreate(&start);
+    hipEventCreate(&end);
+    hipEventCreate(&startTotal);
+    hipEventCreate(&endTotal);
 
-    // Runs CUBLAS call
-    cublasHandle_t handle;
-    cublasErrchk(cublasCreate(&handle));
+    
+    // Runs rocBLAS call
+    rocblas_handle handle;
+    rocblas_create_handle(&handle);
 
     FloatType one = 1;
     FloatType zero = 0;
 
-    cudaErrchk(cudaEventRecord(startTotal));
+    
+    hipEventRecord(startTotal);
 
-    // Cuda Memory Copy
-    cudaErrchk(
-        cudaMemcpy(devA, A, m * k * sizeof(FloatType), cudaMemcpyHostToDevice));
-    cudaErrchk(
-        cudaMemcpy(devB, B, k * n * sizeof(FloatType), cudaMemcpyHostToDevice));
+    // hip Memory Copy
+    
+    hipMemcpy(devA, A, m * k * sizeof(FloatType), hipMemcpyHostToDevice);
+    hipMemcpy(devB, B, k * n * sizeof(FloatType), hipMemcpyHostToDevice);
 
     for (int i = 0; i < N_WARMUP; ++i) {
-        cublasErrchk(launchCublas<FloatType>(handle, one, zero,
-            devA, devB, devC, m, n, k));
+        launchRocblas<FloatType>(handle, one, zero, devA, devB, devC, m, n, k);
     }
     
-    cudaErrchk(cudaEventRecord(start));
+    hipEventRecord(start);
     for (int i = 0; i < N_ROUNDS; ++i) {
-        cublasErrchk(launchCublas<FloatType>(handle, one, zero,
-                                            devA, devB, devC, m, n, k));
+        launchRocblas<FloatType>(handle, one, zero, devA, devB, devC, m, n, k);
     }
-    cudaErrchk(cudaEventRecord(end));
+    hipEventRecord(end);
 
     // Copies result back
-    cudaErrchk(
-        cudaMemcpy(C, devC, m * n * sizeof(FloatType), cudaMemcpyDeviceToHost));
+    
+    hipMemcpy(C, devC, m * n * sizeof(FloatType), hipMemcpyDeviceToHost);
 
-    cudaErrchk(cudaEventRecord(endTotal));
-    cudaErrchk(cudaDeviceSynchronize());
-    cudaErrchk(cudaEventElapsedTime(&time, start, end));
-    cudaErrchk(cudaEventElapsedTime(&timeTotal, startTotal, endTotal));
+    hipEventRecord(endTotal);
+    hipDeviceSynchronize();
+    hipEventElapsedTime(&time, start, end);
+    hipEventElapsedTime(&timeTotal, startTotal, endTotal);
     time /= N_ROUNDS;
     timeTotal /= N_ROUNDS;
 
-    reportTestSuccess<FloatType>("CUBLAS Test", getGFLOPs<FloatType>(time, m, n, k),
-                                getGFLOPs<FloatType>(timeTotal, m, n, k));
+    reportTestSuccess<FloatType>("rocBLAS Test", getGFLOPs<FloatType>(time, m, n, k));
 
-    cublasErrchk(cublasDestroy(handle));
+    rocblas_destroy_handle(handle);
+    
 
     // Runs kernel
     // Failure flag
@@ -178,17 +177,17 @@ bool runKernels(const FloatType* A, const FloatType* B, FloatType* C,
     unsigned int iFail, jFail;
 
     // Clear result matrix
-    cudaErrchk(cudaMemset(devC, 0, m * n * sizeof(FloatType)));
-    cudaErrchk(cudaEventRecord(startTotal));
+    hipMemset(devC, 0, m * n * sizeof(FloatType));
+    hipEventRecord(startTotal);
 
-    // Cuda Memory Copy
-    cudaErrchk(
-        cudaMemcpy(devA, A, m * k * sizeof(FloatType), cudaMemcpyHostToDevice));
-    cudaErrchk(
-        cudaMemcpy(devB, B, k * n * sizeof(FloatType), cudaMemcpyHostToDevice));
+    // hip Memory Copy
+    
+    hipMemcpy(devA, A, m * k * sizeof(FloatType), hipMemcpyHostToDevice);
+
+    hipMemcpy(devB, B, k * n * sizeof(FloatType), hipMemcpyHostToDevice);
 
     for (int i = 0; i < N_WARMUP; ++i) {
-        cudaErrchk(cudaMemset(devC, 0, m * n * sizeof(FloatType)));
+        hipMemset(devC, 0, m * n * sizeof(FloatType));
         if (runIsm2) {
             launchKernelIsm2(devA, devB, devC, m, n, k);
         } else {
@@ -196,46 +195,45 @@ bool runKernels(const FloatType* A, const FloatType* B, FloatType* C,
         }
     }
     
-    cudaErrchk(cudaEventRecord(start));
+    hipEventRecord(start);
     for (int i = 0; i < N_ROUNDS; ++i) {
-        cudaErrchk(cudaMemset(devC, 0, m * n * sizeof(FloatType)));
+        hipMemset(devC, 0, m * n * sizeof(FloatType));
         if (runIsm2) {
             launchKernelIsm2(devA, devB, devC, m, n, k);
         } else {
             launchKernelTsm2(devA, devB, devC, m, n, k);
         }
     }
-    cudaErrchk(cudaGetLastError());
-    cudaErrchk(cudaEventRecord(end));
+    hipGetLastError();
+    hipEventRecord(end);
 
     // Copies result back
-    cudaErrchk(cudaMemcpy(candC, devC, m * n * sizeof(FloatType),
-                          cudaMemcpyDeviceToHost));
+    hipMemcpy(candC, devC, m * n * sizeof(FloatType),
+                          hipMemcpyDeviceToHost);
 
-    cudaErrchk(cudaEventRecord(endTotal));
-    cudaErrchk(cudaDeviceSynchronize());
-    cudaErrchk(cudaEventElapsedTime(&time, start, end));
-    cudaErrchk(cudaEventElapsedTime(&timeTotal, startTotal, endTotal));
+    hipEventRecord(endTotal);
+    hipDeviceSynchronize();
+    hipEventElapsedTime(&time, start, end);
+    hipEventElapsedTime(&timeTotal, startTotal, endTotal);
     time /= N_ROUNDS;
     timeTotal /= N_ROUNDS;
     
     status = matrixCompare<FloatType>(C, candC, m, n, iFail, jFail);
     if (status) {
         reportTestSuccess<FloatType>(testName,
-                                  getGFLOPs<FloatType>(time, m, n, k),
-                                  getGFLOPs<FloatType>(timeTotal, m, n, k));
+                                  getGFLOPs<FloatType>(time, m, n, k));
     } else {
         reportTestFailure<FloatType>(testName, C, candC, m, iFail, jFail);
     }
 
-    cudaErrchk(cudaEventDestroy(start));
-    cudaErrchk(cudaEventDestroy(end));
-    cudaErrchk(cudaEventDestroy(startTotal));
-    cudaErrchk(cudaEventDestroy(endTotal));
+    hipEventDestroy(start);
+    hipEventDestroy(end);
+    hipEventDestroy(startTotal);
+    hipEventDestroy(endTotal);
     free(candC);
-    cudaErrchk(cudaFree(devA));
-    cudaErrchk(cudaFree(devB));
-    cudaErrchk(cudaFree(devC));
+    hipFree(devA);
+    hipFree(devB);
+    hipFree(devC);
 
     return true;
 }
@@ -278,7 +276,7 @@ bool runMatmul(std::istream& fileA, std::istream& fileB, std::ostream& outFile,
     fileA.read((char*)A, (size_t)m * k * sizeof(FloatType));
     fileB.read((char*)B, (size_t)k * n * sizeof(FloatType));
 
-    // Calls CUDA
+    // Calls hip
     bool status = runKernels<FloatType>(A, B, C, m, n, k, runIsm2);
     if (!status) {
         free(A);

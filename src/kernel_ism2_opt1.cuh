@@ -10,7 +10,8 @@
 #ifndef _KERNEL_ISM2_OPT1_CUH
 #define _KERNEL_ISM2_OPT1_CUH
 
-#include "cuda_runtime.h"
+// #include <wb.h>
+#include <hip/hip_runtime.h>
 
 template <typename FloatType, int t1, int t2, int t3>
 __global__ void kernelIsm2Opt1(const FloatType* A, const FloatType* B,
